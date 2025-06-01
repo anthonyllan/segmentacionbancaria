@@ -100,16 +100,19 @@ def cargar_nuevos_clientes():
         st.session_state.nuevos_clientes = []
     return pd.DataFrame(st.session_state.nuevos_clientes)
 
-# Función para agregar nuevo cliente
-def agregar_nuevo_cliente(nombre, saldo, frecuencia, cluster_real=None):
-    """Agregar nuevo cliente al dataset de aprendizaje"""
+# Función para agregar nuevo cliente (COMPLETA)
+def agregar_nuevo_cliente(nombre, edad, saldo, frecuencia, tipo_uso, ingreso, cluster_real=None):
+    """Agregar nuevo cliente al dataset de aprendizaje con todos los campos"""
     if 'nuevos_clientes' not in st.session_state:
         st.session_state.nuevos_clientes = []
     
     nuevo_cliente = {
         'nombre': nombre,
+        'edad': edad,
         'saldoCuentaAhorro': saldo,
         'frecuenciaUsoMensual': frecuencia,
+        'tipoUso': tipo_uso,
+        'ingresoMensual': ingreso,
         'cluster_predicho': None,
         'cluster_real': cluster_real,
         'fecha_registro': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -125,8 +128,9 @@ def combinar_datos(datos_originales):
     nuevos_df = cargar_nuevos_clientes()
     
     if len(nuevos_df) > 0:
-        # Preparar nuevos datos para combinar
-        nuevos_para_modelo = nuevos_df[['nombre', 'saldoCuentaAhorro', 'frecuenciaUsoMensual']].copy()
+        # Preparar nuevos datos para combinar (mantener todas las columnas)
+        columnas_modelo = ['nombre', 'edad', 'saldoCuentaAhorro', 'frecuenciaUsoMensual', 'tipoUso', 'ingresoMensual']
+        nuevos_para_modelo = nuevos_df[columnas_modelo].copy()
         
         # Combinar con datos originales
         datos_combinados = pd.concat([datos_originales, nuevos_para_modelo], ignore_index=True)
@@ -140,9 +144,9 @@ def entrenar_modelo_adaptativo(datos_originales, nuevos_datos):
     # Combinar datos
     datos_combinados, _ = combinar_datos(datos_originales)
     
-    # Seleccionar características
+    # Seleccionar características para el modelo (solo las numéricas para clustering)
     columnas_numericas = ['saldoCuentaAhorro', 'frecuenciaUsoMensual']
-    datos_numericos = datos_combinados[columnas_numericas]
+    datos_numericos = datos_combinados[columnas_numericas].dropna()
     
     # Normalizar datos
     scaler = MinMaxScaler()
@@ -210,7 +214,7 @@ def obtener_recomendaciones(cluster):
     }
     return recomendaciones.get(cluster, {})
 
-# Función para generar CSV actualizado
+# Función para generar CSV actualizado (COMPLETA)
 def generar_csv_actualizado(datos_originales, nuevos_datos_validados):
     """Generar CSV actualizado con nuevos datos validados"""
     if len(nuevos_datos_validados) > 0:
@@ -218,8 +222,9 @@ def generar_csv_actualizado(datos_originales, nuevos_datos_validados):
         validados = nuevos_datos_validados[nuevos_datos_validados['validado'] == True].copy()
         
         if len(validados) > 0:
-            # Preparar datos para agregar
-            datos_para_agregar = validados[['nombre', 'saldoCuentaAhorro', 'frecuenciaUsoMensual']].copy()
+            # Preparar datos para agregar (con todas las columnas)
+            columnas_dataset = ['nombre', 'edad', 'saldoCuentaAhorro', 'frecuenciaUsoMensual', 'tipoUso', 'ingresoMensual']
+            datos_para_agregar = validados[columnas_dataset].copy()
             
             # Combinar con datos originales
             datos_actualizados = pd.concat([datos_originales, datos_para_agregar], ignore_index=True)
@@ -236,9 +241,17 @@ if datos_originales is not None:
     # Entrenar modelo con datos combinados
     kmeans, scaler, clusters, datos_escalados, datos_combinados = entrenar_modelo_adaptativo(datos_originales, nuevos_datos)
     
-    # Agregar clusters a los datos combinados
+    # Agregar clusters a los datos combinados (solo a las filas que tienen datos completos)
     datos_con_clusters = datos_combinados.copy()
-    datos_con_clusters['cluster'] = clusters
+    
+    # Asignar clusters solo a filas con datos completos
+    datos_completos = datos_combinados[['saldoCuentaAhorro', 'frecuenciaUsoMensual']].dropna()
+    if len(datos_completos) == len(clusters):
+        # Crear una columna de clusters que mantenga NaN para filas incompletas
+        cluster_series = pd.Series(index=datos_combinados.index, dtype='float64')
+        datos_numericos_indices = datos_combinados[['saldoCuentaAhorro', 'frecuenciaUsoMensual']].dropna().index
+        cluster_series.loc[datos_numericos_indices] = clusters
+        datos_con_clusters['cluster'] = cluster_series
 
     # Mostrar estado de GitHub en sidebar
     st.sidebar.title("🔍 Navegación")
@@ -272,25 +285,34 @@ if datos_originales is not None:
         with col1:
             st.metric("Total Clientes", len(datos_combinados), delta=len(nuevos_datos) if len(nuevos_datos) > 0 else None)
         with col2:
-            st.metric("Cluster 0", len(datos_con_clusters[datos_con_clusters['cluster'] == 0]))
+            cluster_0_count = len(datos_con_clusters[datos_con_clusters['cluster'] == 0]) if 'cluster' in datos_con_clusters.columns else 0
+            st.metric("Cluster 0", cluster_0_count)
         with col3:
-            st.metric("Cluster 1", len(datos_con_clusters[datos_con_clusters['cluster'] == 1]))
+            cluster_1_count = len(datos_con_clusters[datos_con_clusters['cluster'] == 1]) if 'cluster' in datos_con_clusters.columns else 0
+            st.metric("Cluster 1", cluster_1_count)
         with col4:
-            st.metric("Cluster 2", len(datos_con_clusters[datos_con_clusters['cluster'] == 2]))
+            cluster_2_count = len(datos_con_clusters[datos_con_clusters['cluster'] == 2]) if 'cluster' in datos_con_clusters.columns else 0
+            st.metric("Cluster 2", cluster_2_count)
         
-        # 🔧 GRÁFICO CORREGIDO - Sin errores de longitud
+        # Gráfico principal
         st.subheader("📈 Distribución de Clusters")
         
-        # Crear gráfico simple sin marcadores de tipo para evitar errores
-        fig = px.scatter(
-            datos_con_clusters, 
-            x='saldoCuentaAhorro', 
-            y='frecuenciaUsoMensual',
-            color='cluster',
-            hover_data=['nombre'],
-            title="Segmentación de Clientes",
-            labels={'saldoCuentaAhorro': 'Saldo Cuenta Ahorro', 'frecuenciaUsoMensual': 'Frecuencia Uso Mensual'}
-        )
+        # Filtrar solo datos con clusters asignados
+        datos_con_cluster_valido = datos_con_clusters.dropna(subset=['cluster'])
+        
+        if len(datos_con_cluster_valido) > 0:
+            fig = px.scatter(
+                datos_con_cluster_valido, 
+                x='saldoCuentaAhorro', 
+                y='frecuenciaUsoMensual',
+                color='cluster',
+                hover_data=['nombre', 'edad', 'tipoUso', 'ingresoMensual'],
+                title="Segmentación de Clientes",
+                labels={'saldoCuentaAhorro': 'Saldo Cuenta Ahorro', 'frecuenciaUsoMensual': 'Frecuencia Uso Mensual'}
+            )
+        else:
+            st.warning("No hay datos suficientes para mostrar el gráfico")
+            fig = px.scatter()
         
         # Si hay nuevos datos, agregar línea para distinguir
         if len(nuevos_datos) > 0:
@@ -304,7 +326,11 @@ if datos_originales is not None:
         col1, col2, col3 = st.columns(3)
         
         for i in range(3):
-            cluster_data = datos_con_clusters[datos_con_clusters['cluster'] == i]
+            if 'cluster' in datos_con_clusters.columns:
+                cluster_data = datos_con_clusters[datos_con_clusters['cluster'] == i]
+            else:
+                cluster_data = pd.DataFrame()
+                
             recom = obtener_recomendaciones(i)
             
             with [col1, col2, col3][i]:
@@ -313,18 +339,36 @@ if datos_originales is not None:
                 if len(cluster_data) > 0:
                     st.write(f"Saldo promedio: ${cluster_data['saldoCuentaAhorro'].mean():,.0f}")
                     st.write(f"Frecuencia promedio: {cluster_data['frecuenciaUsoMensual'].mean():.1f}")
+                    if 'edad' in cluster_data.columns:
+                        edad_promedio = cluster_data['edad'].mean()
+                        if not pd.isna(edad_promedio):
+                            st.write(f"Edad promedio: {edad_promedio:.1f} años")
 
-    # Análisis Individual
+    # Análisis Individual (COMPLETO)
     elif opcion == "👤 Análisis Individual":
         st.subheader("👤 Análisis de Cliente Individual")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.write("### Datos del Cliente")
-            nombre = st.text_input("Nombre del cliente:")
-            saldo = st.number_input("Saldo Cuenta Ahorro:", min_value=0, value=5000, step=100)
-            frecuencia = st.number_input("Frecuencia Uso Mensual:", min_value=0, value=10, step=1)
+            st.write("### 📋 Datos Completos del Cliente")
+            
+            # Campos básicos
+            nombre = st.text_input("👤 Nombre del cliente:")
+            edad = st.number_input("🎂 Edad:", min_value=0, max_value=120, value=25, step=1)
+            
+            # Campos financieros
+            saldo = st.number_input("💰 Saldo Cuenta Ahorro:", min_value=0, value=5000, step=100)
+            frecuencia = st.number_input("📊 Frecuencia Uso Mensual:", min_value=0, value=10, step=1)
+            
+            # Tipo de uso
+            tipo_uso = st.selectbox(
+                "🏦 Tipo de Uso Principal:",
+                ["Ahorro", "Transferencias", "Pagos frecuentes", "Retiro de efectivo", "Otro"]
+            )
+            
+            # Ingreso mensual
+            ingreso = st.number_input("💵 Ingreso Mensual:", min_value=0.0, value=5000.0, step=100.0)
             
             # Opción para guardar cliente
             guardar_cliente = st.checkbox("💾 Guardar cliente para mejorar el modelo", value=True)
@@ -336,7 +380,7 @@ if datos_originales is not None:
                     
                     # Guardar cliente si está marcado
                     if guardar_cliente:
-                        cliente_guardado = agregar_nuevo_cliente(nombre, saldo, frecuencia)
+                        cliente_guardado = agregar_nuevo_cliente(nombre, edad, saldo, frecuencia, tipo_uso, ingreso)
                         # Actualizar la predicción en el cliente guardado
                         st.session_state.nuevos_clientes[-1]['cluster_predicho'] = cluster_predicho
                         st.info("💾 Cliente guardado para mejorar el modelo")
@@ -353,13 +397,21 @@ if datos_originales is not None:
                         st.write(f"**Perfil:** {recomendaciones['perfil']}")
                         st.write(f"**Descripción:** {recomendaciones['descripcion']}")
                         
+                        # Resumen del cliente
+                        st.write("### 📊 Resumen del Cliente")
+                        st.write(f"• **Edad:** {edad} años")
+                        st.write(f"• **Saldo:** ${saldo:,.0f}")
+                        st.write(f"• **Frecuencia:** {frecuencia} veces/mes")
+                        st.write(f"• **Uso principal:** {tipo_uso}")
+                        st.write(f"• **Ingreso:** ${ingreso:,.0f}/mes")
+                        
                         st.write("### 💼 Productos Recomendados")
                         for producto in recomendaciones['productos']:
                             st.write(f"• {producto}")
                 else:
                     st.warning("⚠️ Por favor ingresa el nombre del cliente")
 
-    # Aprendizaje Continuo CON GITHUB AUTOMÁTICO
+    # Aprendizaje Continuo (ACTUALIZADO)
     elif opcion == "🧠 Aprendizaje Continuo":
         st.subheader("🧠 Gestión de Aprendizaje Continuo")
         
@@ -369,7 +421,10 @@ if datos_originales is not None:
             
             # Convertir a DataFrame para mostrar
             display_df = nuevos_datos.copy()
-            st.dataframe(display_df)
+            # Mostrar columnas relevantes
+            columnas_mostrar = ['nombre', 'edad', 'saldoCuentaAhorro', 'frecuenciaUsoMensual', 'tipoUso', 'ingresoMensual', 'cluster_predicho', 'validado']
+            display_df_filtered = display_df[columnas_mostrar] if all(col in display_df.columns for col in columnas_mostrar) else display_df
+            st.dataframe(display_df_filtered)
             
             # Validación de predicciones
             st.write("### ✅ Validación de Predicciones")
@@ -381,9 +436,13 @@ if datos_originales is not None:
                         col1, col2, col3 = st.columns(3)
                         
                         with col1:
-                            st.write(f"**Saldo:** ${cliente['saldoCuentaAhorro']:,.0f}")
-                            st.write(f"**Frecuencia:** {cliente['frecuenciaUsoMensual']}")
-                            st.write(f"**Predicción:** Cluster {cliente.get('cluster_predicho', 'No predicho')}")
+                            st.write("**📊 Datos del Cliente:**")
+                            st.write(f"• **Edad:** {cliente.get('edad', 'N/A')} años")
+                            st.write(f"• **Saldo:** ${cliente['saldoCuentaAhorro']:,.0f}")
+                            st.write(f"• **Frecuencia:** {cliente['frecuenciaUsoMensual']}")
+                            st.write(f"• **Tipo uso:** {cliente.get('tipoUso', 'N/A')}")
+                            st.write(f"• **Ingreso:** ${cliente.get('ingresoMensual', 0):,.0f}")
+                            st.write(f"• **Predicción:** Cluster {cliente.get('cluster_predicho', 'No predicho')}")
                         
                         with col2:
                             cluster_real = st.selectbox(
@@ -417,7 +476,7 @@ if datos_originales is not None:
                 with col3:
                     st.metric("Precisión del Modelo", f"{precision:.1f}%")
             
-            # 🚀 GITHUB AUTOMÁTICO
+            # GITHUB AUTOMÁTICO
             st.write("### 🚀 Actualización Automática de GitHub")
             
             validados_df = nuevos_datos[nuevos_datos['validado'] == True]
@@ -453,7 +512,8 @@ if datos_originales is not None:
                     if st.button("👀 Ver Preview de Datos"):
                         datos_actualizados = generar_csv_actualizado(datos_originales, nuevos_datos)
                         st.write(f"**Se agregarán {len(validados_df)} nuevos clientes:**")
-                        st.dataframe(validados_df[['nombre', 'saldoCuentaAhorro', 'frecuenciaUsoMensual', 'cluster_real']])
+                        columnas_preview = ['nombre', 'edad', 'saldoCuentaAhorro', 'frecuenciaUsoMensual', 'tipoUso', 'ingresoMensual']
+                        st.dataframe(validados_df[columnas_preview])
                         st.write(f"**Total clientes después de actualizar:** {len(datos_actualizados)}")
             else:
                 st.warning("⚠️ Valida algunos clientes primero para poder guardar en GitHub")
@@ -487,7 +547,7 @@ if datos_originales is not None:
         else:
             st.info("📝 No hay nuevos clientes registrados aún. Usa 'Análisis Individual' para agregar clientes.")
 
-    # Carga Masiva
+    # Resto de secciones (Carga Masiva y Visualización Avanzada siguen igual)
     elif opcion == "📁 Carga Masiva":
         st.subheader("📁 Carga Masiva de Clientes")
         
@@ -503,6 +563,8 @@ if datos_originales is not None:
                 
                 # Verificar columnas requeridas
                 columnas_requeridas = ['nombre', 'saldoCuentaAhorro', 'frecuenciaUsoMensual']
+                columnas_opcionales = ['edad', 'tipoUso', 'ingresoMensual']
+                
                 if all(col in nuevos_datos_masivos.columns for col in columnas_requeridas):
                     
                     if st.button("🚀 Procesar Archivo", type="primary"):
@@ -521,8 +583,11 @@ if datos_originales is not None:
                             # Agregar cada cliente al sistema de aprendizaje
                             agregar_nuevo_cliente(
                                 row['nombre'],
+                                row.get('edad', None),
                                 row['saldoCuentaAhorro'],
-                                row['frecuenciaUsoMensual']
+                                row['frecuenciaUsoMensual'],
+                                row.get('tipoUso', ''),
+                                row.get('ingresoMensual', 0.0)
                             )
                             # Actualizar predicción
                             st.session_state.nuevos_clientes[-1]['cluster_predicho'] = cluster
@@ -556,7 +621,8 @@ if datos_originales is not None:
                         )
                         
                 else:
-                    st.error(f"❌ El archivo debe contener las columnas: {columnas_requeridas}")
+                    st.error(f"❌ El archivo debe contener las columnas obligatorias: {columnas_requeridas}")
+                    st.info(f"📋 Columnas opcionales que puedes incluir: {columnas_opcionales}")
                     
             except Exception as e:
                 st.error(f"❌ Error al procesar archivo: {e}")
@@ -565,54 +631,85 @@ if datos_originales is not None:
     elif opcion == "📈 Visualización Avanzada":
         st.subheader("📈 Análisis Avanzado de Clusters")
         
-        # Método del codo
-        st.write("### 🔧 Método del Codo")
+        # Solo mostrar si hay datos con clusters válidos
+        datos_con_cluster_valido = datos_con_clusters.dropna(subset=['cluster']) if 'cluster' in datos_con_clusters.columns else pd.DataFrame()
         
-        k_range = range(1, 11)
-        inertias = []
-        
-        for k in k_range:
-            kmeans_temp = KMeans(n_clusters=k, random_state=42)
-            kmeans_temp.fit(datos_escalados)
-            inertias.append(kmeans_temp.inertia_)
-        
-        fig_codo = px.line(
-            x=list(k_range), 
-            y=inertias,
-            title="Método del Codo - Determinación del Número Óptimo de Clusters",
-            labels={'x': 'Número de Clusters (k)', 'y': 'Inercia (WCSS)'}
-        )
-        fig_codo.add_vline(x=3, line_dash="dash", line_color="red", annotation_text="k=3 (Óptimo)")
-        st.plotly_chart(fig_codo, use_container_width=True)
-        
-        # Distribuciones
-        st.write("### 📊 Distribuciones por Cluster")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            fig_saldo = px.box(
-                datos_con_clusters, 
-                x='cluster', 
-                y='saldoCuentaAhorro',
-                title="Distribución de Saldos por Cluster"
+        if len(datos_con_cluster_valido) > 0:
+            # Método del codo
+            st.write("### 🔧 Método del Codo")
+            
+            k_range = range(1, 11)
+            inertias = []
+            
+            for k in k_range:
+                kmeans_temp = KMeans(n_clusters=k, random_state=42)
+                kmeans_temp.fit(datos_escalados)
+                inertias.append(kmeans_temp.inertia_)
+            
+            fig_codo = px.line(
+                x=list(k_range), 
+                y=inertias,
+                title="Método del Codo - Determinación del Número Óptimo de Clusters",
+                labels={'x': 'Número de Clusters (k)', 'y': 'Inercia (WCSS)'}
             )
-            st.plotly_chart(fig_saldo, use_container_width=True)
-        
-        with col2:
-            fig_freq = px.box(
-                datos_con_clusters, 
-                x='cluster', 
-                y='frecuenciaUsoMensual',
-                title="Distribución de Frecuencia por Cluster"
-            )
-            st.plotly_chart(fig_freq, use_container_width=True)
+            fig_codo.add_vline(x=3, line_dash="dash", line_color="red", annotation_text="k=3 (Óptimo)")
+            st.plotly_chart(fig_codo, use_container_width=True)
+            
+            # Distribuciones
+            st.write("### 📊 Distribuciones por Cluster")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_saldo = px.box(
+                    datos_con_cluster_valido, 
+                    x='cluster', 
+                    y='saldoCuentaAhorro',
+                    title="Distribución de Saldos por Cluster"
+                )
+                st.plotly_chart(fig_saldo, use_container_width=True)
+            
+            with col2:
+                fig_freq = px.box(
+                    datos_con_cluster_valido, 
+                    x='cluster', 
+                    y='frecuenciaUsoMensual',
+                    title="Distribución de Frecuencia por Cluster"
+                )
+                st.plotly_chart(fig_freq, use_container_width=True)
+            
+            # Análisis adicional si hay más datos
+            if 'edad' in datos_con_cluster_valido.columns:
+                st.write("### 👥 Análisis Demográfico")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig_edad = px.box(
+                        datos_con_cluster_valido.dropna(subset=['edad']), 
+                        x='cluster', 
+                        y='edad',
+                        title="Distribución de Edad por Cluster"
+                    )
+                    st.plotly_chart(fig_edad, use_container_width=True)
+                
+                with col2:
+                    if 'ingresoMensual' in datos_con_cluster_valido.columns:
+                        fig_ingreso = px.box(
+                            datos_con_cluster_valido.dropna(subset=['ingresoMensual']), 
+                            x='cluster', 
+                            y='ingresoMensual',
+                            title="Distribución de Ingresos por Cluster"
+                        )
+                        st.plotly_chart(fig_ingreso, use_container_width=True)
+        else:
+            st.warning("No hay suficientes datos para mostrar visualizaciones avanzadas")
 
 else:
     st.error("❌ No se pudieron cargar los datos desde GitHub")
 
 # Footer
 if GITHUB_TOKEN:
-    st.markdown(f"**🏦 Sistema de Segmentación Bancaria con GitHub Automático** ✅ | Clientes en sesión: {len(nuevos_datos)}")
+    st.markdown(f"**🏦 Sistema de Segmentación Bancaria Completo con GitHub Automático** ✅ | Clientes en sesión: {len(nuevos_datos)}")
 else:
-    st.markdown(f"**🏦 Sistema de Segmentación Bancaria** ❌ GitHub desconectado | Clientes en sesión: {len(nuevos_datos)}")
+    st.markdown(f"**🏦 Sistema de Segmentación Bancaria Completo** ❌ GitHub desconectado | Clientes en sesión: {len(nuevos_datos)}")
